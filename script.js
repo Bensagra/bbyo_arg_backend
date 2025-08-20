@@ -8,15 +8,10 @@ const app = express();
 app.use(express.json());
 
 // CORS — ajustá la lista a tus orígenes reales
-const allowed = [
-  "http://127.0.0.1:5500",
-  "http://localhost:5500",
-  "http://localhost:3000",
-  "https://tu-frontend.vercel.app",
-];
+
 app.use(
   cors({
-    origin: (origin, cb) => cb(null, !origin || allowed.includes(origin)),
+    origin: "*",
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
     credentials: false,
