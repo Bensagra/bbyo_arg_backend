@@ -1,122 +1,227 @@
 import { EstadoActividad, PrismaClient } from "@prisma/client";
 const prisma = new PrismaClient();
 
+// --------- helpers ---------
+async function resolveChapter({ chapterId, chapterSlug }) {
+  if (chapterId) return prisma.chapter.findUnique({ where: { id: Number(chapterId) } });
+  if (chapterSlug) return prisma.chapter.findUnique({ where: { slug: String(chapterSlug) } });
+  return null;
+}
+
+async function getActivityBasic(activityId) {
+  return prisma.activity.findUnique({
+    where: { id: activityId },
+    select: { id: true, chapterId: true },
+  });
+}
+
+// --------- controllers ---------
+
+/**
+ * POST /activities
+ * body: { date, notas?, chapterId? | chapterSlug? }
+ */
 export const createActivity = async (req, res) => {
-  const { date, content, name } = req.body;
+  const { date, notas, chapterId, chapterSlug } = req.body;
+
   try {
+    if (!date) return res.status(400).json({ message: "Falta 'date'." });
+
+    const chapter = await resolveChapter({ chapterId, chapterSlug });
+    if (!chapter) {
+      return res.status(400).json({ message: "Debes indicar un chapter válido (chapterId o chapterSlug)." });
+    }
+
     const newActivity = await prisma.activity.create({
       data: {
         fecha: new Date(date),
-        
-        
-      }
+        chapterId: chapter.id,
+        ...(notas ? { notas: String(notas) } : {}),
+      },
+      include: {
+        participants: { include: { user: true } },
+        tematicas: { include: { tematica: true } },
+      },
     });
-    res.status(201).json(newActivity);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-}
 
+    return res.status(201).json(newActivity);
+  } catch (error) {
+    if (error.code === "P2002") {
+      return res.status(409).json({ message: "Ya existe una actividad con esa fecha." });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+};
+
+/**
+ * GET /activities
+ * query: ?chapterId=... | ?chapterSlug=... &from=YYYY-MM-DD &to=YYYY-MM-DD &q=&take=&skip=
+ */
 export const listActivities = async (req, res) => {
   try {
-    const activities = await prisma.activity.findMany({
-      orderBy: { fecha: 'asc' }
-      , include: {
-        participants: {
-          include: { user: true }
+    const { chapterId, chapterSlug } = req.query;
+    const chapter = await resolveChapter({ chapterId, chapterSlug });
+    if (!chapter) return res.status(400).json({ message: "Debes indicar chapterId o chapterSlug." });
+
+    const q = (req.query.q ?? "").toString().trim();
+    const take = Number.isFinite(Number(req.query.take)) ? Number(req.query.take) : 50;
+    const skip = Number.isFinite(Number(req.query.skip)) ? Number(req.query.skip) : 0;
+
+    const from = req.query.from ? new Date(String(req.query.from)) : null;
+    const to = req.query.to ? new Date(String(req.query.to)) : null;
+
+    const where = { chapterId: chapter.id };
+    if (from || to) {
+      where.fecha = {
+        ...(from ? { gte: from } : {}),
+        ...(to ? { lte: to } : {}),
+      };
+    }
+    if (q) {
+      where.OR = [{ notas: { contains: q, mode: "insensitive" } }];
+    }
+
+    const [items, total] = await Promise.all([
+      prisma.activity.findMany({
+        where,
+        orderBy: { fecha: "asc" },
+        take,
+        skip,
+        include: {
+          participants: { include: { user: true } },
+          tematicas: { include: { tematica: true } },
         },
-        tematicas: {
-          include: { tematica: true }
-        }
-      }
-    });
-    res.status(200).json(activities);
+      }),
+      prisma.activity.count({ where }),
+    ]);
+
+    return res.status(200).json({ total, take, skip, items });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    return res.status(500).json({ error: error.message });
   }
-}
+};
+
+/**
+ * PATCH /activities/:id
+ * body: { planificada?: boolean, notas?: string }
+ * - planificada=true => FUE_PLANIFICADA
+ * - si no, calcula por cantidad de participants del mismo chapter
+ */
 export const patchActivity = async (req, res) => {
   const id = parseInt(req.params.id, 10);
-  const { estado, notas } = req.body;
-  let nuevoEstado;
-  if (estado) {
-    nuevoEstado = EstadoActividad.FUE_PLANIFICADA;
-  } else {
-    const totalParticipants = await prisma.activityUser.count({
-      where: { activityId: id },
-    });
-     nuevoEstado =
-      totalParticipants >= 3
-        ? EstadoActividad.YA_HAY_GENTE_PERO_NO_SE_PLANIFICO
-        : EstadoActividad.HAY_GENTE_PERO_NO_NECESARIA;
-  }
+  const { planificada, notas } = req.body;
+
   try {
+    const activity = await getActivityBasic(id);
+    if (!activity) return res.status(404).json({ message: "Actividad no encontrada" });
+
+    let nuevoEstado;
+    if (planificada === true) {
+      nuevoEstado = EstadoActividad.FUE_PLANIFICADA;
+    } else {
+      const totalParticipants = await prisma.activityUser.count({
+        where: { activityId: id, chapterId: activity.chapterId },
+      });
+      nuevoEstado =
+        totalParticipants >= 3
+          ? EstadoActividad.YA_HAY_GENTE_PERO_NO_SE_PLANIFICO
+          : EstadoActividad.HAY_GENTE_PERO_NO_NECESARIA;
+    }
+
     const updated = await prisma.activity.update({
       where: { id },
-      data: { estado: nuevoEstado, notas }
+      data: { estado: nuevoEstado, ...(notas !== undefined ? { notas: String(notas) } : {}) },
+      include: {
+        participants: { include: { user: true } },
+        tematicas: { include: { tematica: true } },
+      },
     });
-    res.status(200).json(updated);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-}
 
+    return res.status(200).json(updated);
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+};
+
+/**
+ * PUT /activities/:id
+ * body: { participants: string[] (DNIs), topics: string[] (labels) }
+ * - Valida que TODOS los DNIs pertenezcan al MISMO chapter de la activity
+ * - Temáticas por (chapterId, tematica) (case-insensitive)
+ * - Vincula ActivityUser (con chapterId) y ActivityTematica
+ * - Actualiza estado según #participants
+ */
 export const updateActivity = async (req, res) => {
   const activityId = parseInt(req.params.id, 10);
-  // destructuramos acorde al front: participants → array de DNIs, topics → array de labels
   const { participants: dnis = [], topics = [] } = req.body;
 
   try {
-    // 1) Find or create cada temática por su texto
+    const act = await getActivityBasic(activityId);
+    if (!act) return res.status(404).json({ message: "Actividad no encontrada" });
+
+    // 1) Temáticas por chapter
     const tematicas = await Promise.all(
-      topics.map(async (label) => {
+      topics.map(async (labelRaw) => {
+        const label = String(labelRaw).trim();
+        if (!label) return null;
+
         let tema = await prisma.tematica.findFirst({
-          where: { tematica: label },
+          where: {
+            chapterId: act.chapterId,
+            tematica: { equals: label, mode: "insensitive" },
+          },
         });
+
         if (!tema) {
           tema = await prisma.tematica.create({
-            data: { tematica: label, usada: true },
+            data: { tematica: label, usada: true, chapterId: act.chapterId },
+          });
+        } else if (!tema.usada) {
+          await prisma.tematica.update({
+            where: { id: tema.id },
+            data: { usada: true },
           });
         }
         return tema;
       })
     );
+    const validTemas = tematicas.filter(Boolean);
 
-    // 2) Cargar usuarios existentes por DNI
+    // 2) Usuarios por DNI y chapter de la actividad
     const users = await prisma.user.findMany({
-      where: { dni: { in: dnis.map(String) } },
+      where: { dni: { in: dnis.map(String) }, chapterId: act.chapterId },
     });
-    if (users.length !== dnis.length) {
-      const encontrados = users.map((u) => u.dni);
-      const faltantes = dnis.filter((d) => !encontrados.includes(d.toString()));
-      return res
-        .status(400)
-        .json({ error: `Usuarios no encontrados: ${faltantes.join(', ')}` });
+
+    const encontradosDNIs = new Set(users.map((u) => u.dni));
+    const faltantes = dnis.filter((d) => !encontradosDNIs.has(String(d)));
+    if (faltantes.length > 0) {
+      return res.status(400).json({
+        error: `Usuarios no encontrados en este chapter: ${faltantes.join(", ")}`,
+      });
     }
 
-    // 3) En transacción, agregamos sólo las nuevas relaciones (skipDuplicates)
+    // 3) Vincular users y temáticas
     await prisma.$transaction([
-      // vincular usuarios (sólo crea los que falten)
       prisma.activityUser.createMany({
         data: users.map((u) => ({
-          activityId,
+          activityId: activityId,
           userId: u.id,
+          chapterId: act.chapterId,
         })),
         skipDuplicates: true,
       }),
-      // vincular temáticas (idem)
       prisma.activityTematica.createMany({
-        data: tematicas.map((t) => ({
-          activityId,
+        data: validTemas.map((t) => ({
+          activityId: activityId,
           tematicaId: t.id,
         })),
         skipDuplicates: true,
       }),
     ]);
 
-    // 4) Contar participantes para actualizar estado
+    // 4) Recalcular estado
     const totalParticipants = await prisma.activityUser.count({
-      where: { activityId },
+      where: { activityId: activityId, chapterId: act.chapterId },
     });
     const nuevoEstado =
       totalParticipants >= 3
@@ -128,22 +233,18 @@ export const updateActivity = async (req, res) => {
       data: { estado: nuevoEstado },
     });
 
-    // 5) Devolver actividad actualizada con relaciones
+    // 5) Devolver actividad completa
     const updated = await prisma.activity.findUnique({
       where: { id: activityId },
       include: {
-        participants: {
-          include: { user: true },
-        },
-        tematicas: {
-          include: { tematica: true },
-        },
+        participants: { include: { user: true } },
+        tematicas: { include: { tematica: true } },
       },
     });
 
     return res.status(200).json(updated);
   } catch (error) {
-    console.error('Error en updateActivity:', error);
+    console.error("Error en updateActivity:", error);
     return res.status(500).json({ error: error.message });
   }
 };

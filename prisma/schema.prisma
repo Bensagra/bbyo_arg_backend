@@ -16,66 +16,104 @@ enum EstadoActividad {
   FUE_DADA_LA_PLANIFICACION         // Estado5: Fue dada la planificación
 }
 
+/// Capítulos / Chapters
+model Chapter {
+  id           Int         @id @default(autoincrement())
+  name         String
+  slug         String      @unique
+  isActive     Boolean     @default(true)
+  region       String?     // opcional, por si te sirve agrupar
+
+  users        User[]
+  activities   Activity[]
+
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  Tematica Tematica[]
+}
+
 /// Usuarios de la aplicación
 model User {
-  id           Int             @id @default(autoincrement())
-  name       String
-  surname     String
-  dni          String          @unique
-  email        String          @unique
-  actividades  ActivityUser[]  // relaciones a actividades
+  id           Int                    @id @default(autoincrement())
+  name         String
+  surname      String
+  dni          String                 @unique
+  email        String                 @unique
 
+  chapter      Chapter                @relation(fields: [chapterId], references: [id], onDelete: Restrict)
+  chapterId    Int
+
+  actividades  ActivityUser[]         // relaciones a actividades
   disponibilidadHorarios DisponibilidadHorarios[]
+
+  // Para poder hacer FKs compuestas desde ActivityUser
+  @@unique([id, chapterId])
 }
 
 /// Temáticas publicadas anónimamente
 model Tematica {
-  id           Int                   @id @default(autoincrement())
-  tematica     String
-  usada        Boolean               @default(false)
-  createdAt   DateTime              @default(now())
-  actividades  ActivityTematica[]    // relaciones a actividades
+  id         Int      @id @default(autoincrement())
+  tematica   String
+  usada      Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  chapter    Chapter  @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  chapterId  Int
+  actividades ActivityTematica[]
+
+  @@unique([chapterId, tematica])
 }
 
 /// Día de planificación con su estado y temáticas
 model Activity {
-  id             Int                   @id @default(autoincrement())
-  fecha          DateTime              @unique     // Fecha de la actividad
-  estado         EstadoActividad       @default(NO_HAY_NADIE)
-  participants   ActivityUser[]        // usuarios que realizan la actividad
-  tematicas      ActivityTematica[]    // temáticas asociadas a la actividad
-  createdAt      DateTime              @default(now())
-  updatedAt      DateTime              @updatedAt
-  notas          String?               // Notas opcionales sobre la actividad
+  id             Int                 @id @default(autoincrement())
+  fecha          DateTime            @unique     // Fecha de la actividad
+  estado         EstadoActividad     @default(NO_HAY_NADIE)
+
+  chapter        Chapter             @relation(fields: [chapterId], references: [id], onDelete: Restrict)
+  chapterId      Int
+
+  participants   ActivityUser[]      // usuarios que realizan la actividad
+  tematicas      ActivityTematica[]  // temáticas asociadas a la actividad
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  notas          String?             // Notas opcionales sobre la actividad
+
+  // Para poder hacer FKs compuestas desde ActivityUser
+  @@unique([id, chapterId])
 }
 
 /// Tabla de unión para asociar usuarios a una actividad
+/// ⚠️ Incluye chapterId y FKs compuestas para obligar a que
+///    user y activity pertenezcan al MISMO chapter.
 model ActivityUser {
-  activity    Activity   @relation(fields: [activityId], references: [id])
+  activity    Activity  @relation(fields: [activityId, chapterId], references: [id, chapterId], onDelete: Cascade)
   activityId  Int
 
-  user        User       @relation(fields: [userId], references: [id])
+  user        User      @relation(fields: [userId, chapterId], references: [id, chapterId], onDelete: Cascade)
   userId      Int
 
-  @@id([activityId, userId])
+  chapterId   Int       // cierra la consistencia: activity y user deben compartirlo
+
+  @@id([activityId, userId])               // evita duplicados de participación
+  @@index([chapterId])                     // consultas por chapter
+  @@unique([activityId, userId, chapterId])// redundante pero explícito
 }
 
 /// Tabla de unión para asociar temáticas a una actividad
 model ActivityTematica {
-  activity     Activity   @relation(fields: [activityId], references: [id])
+  activity     Activity   @relation(fields: [activityId], references: [id], onDelete: Cascade)
   activityId   Int
 
-  tematica     Tematica   @relation(fields: [tematicaId], references: [id])
+  tematica     Tematica   @relation(fields: [tematicaId], references: [id], onDelete: Restrict)
   tematicaId   Int
 
   @@id([activityId, tematicaId])
 }
 
-
-
 model DisponibilidadHorarios {
   id      Int    @id @default(autoincrement())
-  user    User   @relation(fields: [userId], references: [id])
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
   userId  Int
   dia     String
   horario String
