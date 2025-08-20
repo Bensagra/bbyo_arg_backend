@@ -1,39 +1,34 @@
-
-
-import express from 'express';
-import morgan from 'morgan';
-import routes from "./routes.js";
-import request from 'supertest';
-
+import express from "express";
 import cors from "cors";
-import { start } from 'repl';
-let server;
+import router from "./router.js";
+
 const app = express();
 
-const corsOptions = {
-  origin: "*",
-  optionsSuccessStatus: 200,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'], // Métodos permitidos
-  allowedHeaders: ['Content-Type', 'Authorization'], // Encabezados permitidos
-
-};
-
-
-app.use(cors(corsOptions));
-app.set("port", 3000);
-app.use(morgan("dev"));
+// JSON
 app.use(express.json());
-app.use("/", routes);
-/*let body = {
-  cartId: 2,
-  userId: 1
-}*/
-const startServer = () => {
-  app.listen(app.get('port'), () => {
-    console.log(`Servidor corriendo en puerto ${app.get('port')}`);
-  });
-};
-startServer()
-//const response = await request(app).post("/professor/request").send(body);
 
-export default app;
+// CORS — ajustá la lista a tus orígenes reales
+const allowed = [
+  "http://127.0.0.1:5500",
+  "http://localhost:5500",
+  "http://localhost:3000",
+  "https://tu-frontend.vercel.app",
+];
+app.use(
+  cors({
+    origin: (origin, cb) => cb(null, !origin || allowed.includes(origin)),
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: false,
+  })
+);
+// Preflight (por si algún proxy lo requiere)
+app.options("*", cors());
+
+// Rutas
+app.use(router);
+
+// 404
+app.use((req, res) => res.status(404).json({ error: "Not found" }));
+
+export default app; 
