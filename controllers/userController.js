@@ -68,3 +68,15 @@ export const getUser = async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
 };
+
+export const listChapters = async (req, res) => {
+  try {
+    const items = await prisma.chapter.findMany({
+      select: { id: true, name: true, slug: true },
+      orderBy: { name: 'asc' }
+    });
+    res.status(200).json({ items });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+};

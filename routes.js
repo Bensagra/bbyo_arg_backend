@@ -23,6 +23,7 @@ router.post("/api/tematicas", createTematica);
 // ES (legacy)
 router.get("/propuestas", listTematicas);
 router.post("/propuestas", createTematica);
+router.get("/api/chapters", userController.listChapters);
 
 /* ACTIVITIES */
 // EN
