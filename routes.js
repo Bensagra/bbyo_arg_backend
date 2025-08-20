@@ -1,6 +1,5 @@
 import { Router } from "express";
 import * as activityControllers from "./controllers/activityControllers.js";
-import * as proposalControllers from "./controllers/proposalsControllers.js"; // <-- ojo: proposals
 import * as userController from "./controllers/userController.js";
 import { createTematica, listTematicas } from "./controllers/proporsalsControllers.js";
 
